@@ -135,17 +135,22 @@ def calculate_risk(ingredients: list[str]) -> dict:
     total_risk = total_risks / n_total
     normalized_risk = total_risk * 100
 
-    if normalized_risk <= 33:
-        classification = "Bajo riesgo"
-    elif normalized_risk <= 66:
-        classification = "Mediano riesgo"
+    if normalized_risk <= 20:
+        classification, classification_message = "Bajo riesgo", "Consumo seguro"
+    elif normalized_risk <= 40:
+        classification, classification_message = "Medio bajo riesgo", "Consumo moderado"
+    elif normalized_risk <= 60:
+        classification, classification_message = "Medio riesgo", "Consumo ocasional"
+    elif normalized_risk <= 80:
+        classification, classification_message = "Medio alto riesgo", "Consumo muy poco frecuente"
     else:
-        classification = "Alto riesgo"
+        classification, classification_message = "Alto riesgo", "Consumo no recomendado"
 
     return {
         'normalized_risk': round(normalized_risk, 2),
         'classification': classification,
-        'risky_ingredients': risky_ingredients
+        'risky_ingredients': risky_ingredients,
+        'classification_message': classification_message
     }
 
 
@@ -192,7 +197,8 @@ def upload_excel():
 
         except Exception as e:
             db.session.rollback()
-            return jsonify({'error': str(e)}), 500
+            print(e)
+            return jsonify({'error': 'Ocurrió un error al procesar el archivo'}), 500
 
     return jsonify({'error': 'Invalid file format'}), 400
 
@@ -210,8 +216,9 @@ def upload_image():
         "Ácido Esteárico",
         "Ácido Málico",
         "Ácido Cítrico"
-    ]
-}
+    ],
+    "classification_message": "Consumo ocasional"
+    }
     """
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
@@ -225,12 +232,9 @@ def upload_image():
             image = Image.open(io.BytesIO(file.read()))
             processed_image = preprocess_image(image)
             text = pytesseract.image_to_string(processed_image, lang='spa', config='--psm 6')
-            #logging.debug(f'Text: {text}')
             normalized_text = process_text(text)
-            #logging.debug(f'Normalized text: {normalized_text}')
             ingredients = extract_ingredients(normalized_text)
             risk = calculate_risk(ingredients.split(','))
-            #logging.debug(f'Ingredients: {ingredients}')
             return jsonify(
                 risk
             ), 200
