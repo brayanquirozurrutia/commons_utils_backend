@@ -1,4 +1,5 @@
 import io
+import math
 import os
 import logging
 from flask import Flask, request, jsonify
@@ -11,7 +12,6 @@ import cv2
 from PIL import Image
 from dotenv import load_dotenv
 import google.generativeai as genai
-
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -245,6 +245,163 @@ def upload_image():
             }), 500
 
     return jsonify({'error': 'Invalid file format'}), 400
+
+import matplotlib.pyplot as plt
+import base64
+import itertools
+
+
+@app.route('/compare_products', methods=['POST'])
+def compare_products():
+    data = request.json
+    combinations = []
+
+    # Generate product combinations
+    for r in range(1, len(data) + 1):
+        for combo in itertools.combinations(data, r):
+            total_cost = sum(item['package_price'] for item in combo)
+            total_meters = sum(item['units_per_package'] * item['meters_per_unit'] for item in combo)
+            combinations.append({
+                'products': [item['name'] for item in combo],
+                'total_cost': total_cost,
+                'total_meters': total_meters,
+                'cost_per_meter': total_cost / total_meters
+            })
+
+    # Find the cheapest combination
+    cheapest_option = min(combinations, key=lambda x: x['cost_per_meter'])
+
+    # Find the most convenient option (maximizing meters and minimizing cost)
+    convenient_option = min(combinations, key=lambda x: (x['total_cost'], -x['total_meters']))
+
+    # Plot 1: Cheapest Option
+    fig, ax = plt.subplots(figsize=(12, 8))
+    x_labels = ["-".join(combo['products']) for combo in combinations]
+    y_values = [combo['cost_per_meter'] for combo in combinations]
+
+    bars = ax.bar(x_labels, y_values, color='skyblue')
+
+    ax.set_xlabel('Product Combination', fontsize=12)
+    ax.set_ylabel('Cost per Meter ($)', fontsize=12)
+    ax.set_title('Cheapest Option Comparison (Cost per Meter)', fontsize=14)
+    ax.set_xticklabels(x_labels, rotation=45, ha='right', fontsize=10)
+
+    for bar, combo in zip(bars, combinations):
+        height = bar.get_height()
+        if combo == cheapest_option:
+            ax.annotate(f'${combo["total_cost"]:.2f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=10, color='red')
+
+    plt.tight_layout()
+
+    img = io.BytesIO()
+    plt.savefig(img, format='png')
+    img.seek(0)
+    plot1_url = base64.b64encode(img.getvalue()).decode('utf8')
+    plt.close(fig)
+
+    # Plot 2: Most Convenient Option
+    fig, ax = plt.subplots(figsize=(12, 8))
+    convenient_labels = [f"{combo['products']} (Cost: ${combo['total_cost']:.2f}, Meters: {combo['total_meters']})"
+                         for combo in combinations]
+    convenient_y_values = [combo['total_meters'] for combo in combinations]
+
+    convenient_bars = ax.bar(convenient_labels, convenient_y_values, color='lightgreen')
+
+    ax.set_xlabel('Product Combination', fontsize=12)
+    ax.set_ylabel('Total Meters', fontsize=12)
+    ax.set_title('Most Convenient Option (Maximize Meters, Minimize Cost)', fontsize=14)
+    ax.set_xticklabels(convenient_labels, rotation=45, ha='right', fontsize=10)
+
+    for bar, combo in zip(convenient_bars, combinations):
+        height = bar.get_height()
+        if combo == convenient_option:
+            ax.annotate(f'${combo["total_cost"]:.2f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3),
+                        textcoords="offset points",
+                        ha='center', va='bottom', fontsize=10, color='red')
+
+    plt.tight_layout()
+
+    img = io.BytesIO()
+    plt.savefig(img, format='png')
+    img.seek(0)
+    plot2_url = base64.b64encode(img.getvalue()).decode('utf8')
+    plt.close(fig)
+
+    # Plot 3: Comparison of Products
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Identificar el producto más barato y el más conveniente
+    cheapest_product = min(combinations, key=lambda x: x['cost_per_meter'])['products'][0]
+    convenient_product = convenient_option['products'][0]
+
+    # Obtener los costos de los productos
+    cheapest_product_cost = next(c['total_cost'] for c in combinations if cheapest_product in c['products'])
+    convenient_product_cost = next(c['total_cost'] for c in combinations if convenient_product in c['products'])
+
+    # Determinar el producto con el menor costo y el número de múltiplos necesarios
+    min_cost_product = cheapest_product if cheapest_product_cost < convenient_product_cost else convenient_product
+    max_cost_product = convenient_product if cheapest_product_cost < convenient_product_cost else cheapest_product
+    min_cost = min(cheapest_product_cost, convenient_product_cost)
+    max_cost = max(cheapest_product_cost, convenient_product_cost)
+
+    # Calcular los múltiplos del producto más barato
+    num_multiples = math.ceil(max_cost / min_cost)
+
+    logging.info(f"num_multiples: {num_multiples}")
+
+    # Generar las etiquetas y costos de los múltiplos
+    multiples = [f"{min_cost_product}"] + [f"{min_cost_product} x {i}" for i in range(2, num_multiples + 1)]
+    multiple_costs = [min_cost * i for i in range(1, num_multiples + 1)]
+
+    # Añadir el producto más caro
+    multiples.append(max_cost_product)
+    multiple_costs.append(max_cost)
+
+    # Ordenar productos y costos
+    sorted_indices = sorted(range(len(multiple_costs)), key=lambda i: multiple_costs[i])
+    sorted_multiples = [multiples[i] for i in sorted_indices]
+    sorted_costs = [multiple_costs[i] for i in sorted_indices]
+
+    # Crear gráfico de barras
+    bars = ax.bar(sorted_multiples, sorted_costs, color='lightcoral')
+
+    # Añadir anotaciones a las barras
+    for bar, cost in zip(bars, sorted_costs):
+        height = bar.get_height()
+        ax.annotate(f'${cost:.2f}',
+                    xy=(bar.get_x() + bar.get_width() / 2, height),
+                    xytext=(0, 3),
+                    textcoords="offset points",
+                    ha='center', va='bottom', fontsize=10, color='black')
+
+    ax.set_xlabel('Product', fontsize=12)
+    ax.set_ylabel('Total Cost ($)', fontsize=12)
+    ax.set_title('Comparison of Products (Including Multiples)', fontsize=14)
+    ax.set_xticklabels(sorted_multiples, rotation=45, ha='right', fontsize=10)
+
+    plt.tight_layout()
+
+    img = io.BytesIO()
+    plt.savefig(img, format='png')
+    img.seek(0)
+    plot3_url = base64.b64encode(img.getvalue()).decode('utf8')
+    plt.close(fig)
+
+    # Respuesta JSON
+    return jsonify({
+        'cheapest_option': cheapest_option,
+        'convenient_option': convenient_option,
+        'plot1': plot1_url,
+        'plot2': plot2_url,
+        'plot3': plot3_url
+    })
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
